@@ -6,29 +6,6 @@
 .DESCRIPTION
     PathManager provides a pure-PowerShell, interactive console application to view, add, edit, 
     reorder, and delete environment variable entries for both the current User and the local System (Machine). 
-    
-    Architectural features of this version include:
-    - Centralized state management and command-pattern input routing.
-    - Optimized render loops (dirty-flagging) to prevent console flickering.
-    - Invalid path highlighting (verifies if directories exist on disk).
-    - Robust initialization with fallback error handling.
-    - Automatic daily log rotation.
-
-.EXAMPLE
-    PS C:\> .\PathManager.ps1
-    Launches the TUI in the current console. Defaults to modifying the 'User' scope.
-
-.EXAMPLE
-    PS C:\> Start-Process powershell -Verb RunAs -ArgumentList "-File .\PathManager.ps1"
-    Launches the script in an elevated PowerShell session. Administrator privileges are 
-    required to save changes to the 'System' (Machine) PATH.
-
-.NOTES
-    Author:      Gaurav Gupta
-    Copyright:   (c) 2026, Gaurav Gupta. Licensed under the BSD 3-Clause License.
-    Requires:    PowerShell 5.1 or newer, Windows 10+
-    Privileges:  Standard user access is sufficient for the User PATH. 
-                 Administrator rights are required to save changes to the System PATH.
 #>
 
 Set-StrictMode -Off
