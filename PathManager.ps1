@@ -25,6 +25,14 @@ $State = @{
 }
 
 # ── 2. Logging Subsystem ──────────────────────────────────────────────────────────
+
+<#
+.SYNOPSIS
+    Initializes the logging subsystem and performs log rotation.
+.DESCRIPTION
+    Determines the correct log directory based on user privileges (ProgramData vs LocalAppData).
+    Implements a 5-file rotation policy, cycling out logs older than 5MB.
+#>
 function Init-Log {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     $logDir  = if ($isAdmin) { Join-Path $env:ProgramData 'PathManager\logs' }
@@ -47,6 +55,14 @@ function Init-Log {
     }
 }
 
+<#
+.SYNOPSIS
+    Appends a timestamped message to the active log file.
+.PARAMETER level
+    The severity level of the log (e.g., INFO, WARN, ERROR).
+.PARAMETER message
+    The details of the event to log.
+#>
 function Write-Log([string]$level, [string]$message) {
     if (-not $State.LogFile) { return }
     $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
