@@ -172,12 +172,24 @@ function Sync-Scroll {
     $State.Scroll = [Math]::Max(0, $State.Scroll)
 }
 
+<#
+.SYNOPSIS
+    Ensures the selection index stays within the valid bounds of the items list.
+#>
 function Clamp-Sel {
     $n = $State.Items.Count
     $State.Sel = if ($n -eq 0) { 0 } else { [Math]::Max(0, [Math]::Min($State.Sel, $n - 1)) }
 }
 
 # ── 5. Data I/O (Robust Initialization) ───────────────────────────────────────────
+
+<#
+.SYNOPSIS
+    Loads the PATH environment variable into the application state.
+.DESCRIPTION
+    Reads the target scope ('User' or 'Machine') from the registry, parses the
+    semicolon-delimited list, and populates the $State.Items list. Handles errors gracefully.
+#>
 function Load-Data {
     try {
         $raw = [Environment]::GetEnvironmentVariable('PATH', $State.Scope)
@@ -191,7 +203,6 @@ function Load-Data {
         $State.Msg    = "Loaded $($State.Scope) PATH successfully."
         $State.MsgOk  = $true
     } catch {
-        # Fallback error handling if registry read fails
         $State.Items.Clear()
         $State.Msg   = "CRITICAL ERROR reading PATH: $($_.Exception.Message)"
         $State.MsgOk = $false
@@ -200,6 +211,13 @@ function Load-Data {
     $State.Redraw = $true
 }
 
+<#
+.SYNOPSIS
+    Commits the application state back to the Windows registry.
+.DESCRIPTION
+    Enforces privilege checks to ensure the user has Administrator rights before
+    attempting to write to the 'Machine' (System) scope. Updates the dirty flag on success.
+#>
 function Save-Data {
     if ($State.Scope -eq 'Machine') {
         $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
