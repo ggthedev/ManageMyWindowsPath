@@ -1,54 +1,91 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Interactive TUI for managing PATH environment variables.
+    An interactive terminal user interface (TUI) for managing Windows PATH environment variables.
+
+.DESCRIPTION
+    PathManager provides a pure-PowerShell, interactive console application to view, add, edit, 
+    reorder, and delete environment variable entries for both the current User and the local System (Machine). 
+    
+    Architectural features of this version include:
+    - Centralized state management and command-pattern input routing.
+    - Optimized render loops (dirty-flagging) to prevent console flickering.
+    - Invalid path highlighting (verifies if directories exist on disk).
+    - Robust initialization with fallback error handling.
+    - Automatic daily log rotation.
+
+.EXAMPLE
+    PS C:\> .\PathManager.ps1
+    Launches the TUI in the current console. Defaults to modifying the 'User' scope.
+
+.EXAMPLE
+    PS C:\> Start-Process powershell -Verb RunAs -ArgumentList "-File .\PathManager.ps1"
+    Launches the script in an elevated PowerShell session. Administrator privileges are 
+    required to save changes to the 'System' (Machine) PATH.
+
 .NOTES
-    Keys: Up/Down Navigate  Shift+Up/Down Move  A Add  E Edit  Del/X Delete
-          Tab Switch User/System scope  S Save  R Reload  Q / Esc Quit
+    Author:      Gaurav Gupta
+    Copyright:   (c) 2026, Gaurav Gupta. Licensed under the BSD 3-Clause License.
+    Requires:    PowerShell 5.1 or newer, Windows 10+
+    Privileges:  Standard user access is sufficient for the User PATH. 
+                 Administrator rights are required to save changes to the System PATH.
 #>
 
 Set-StrictMode -Off
 
-# ── Logging ───────────────────────────────────────────────────────────────────────
-$script:logFile = $null
+# ── 1. State Encapsulation ────────────────────────────────────────────────────────
+$State = @{
+    Scope   = 'User'
+    Items   = [System.Collections.Generic.List[string]]::new()
+    Sel     = 0
+    Scroll  = 0
+    Dirty   = $false
+    Msg     = 'Initializing...'
+    MsgOk   = $true
+    Run     = $true
+    LogFile = $null
+    Redraw  = $true
+}
 
-function InitLog {
+# ── 2. Logging Subsystem ──────────────────────────────────────────────────────────
+function Init-Log {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     $logDir  = if ($isAdmin) { Join-Path $env:ProgramData 'PathManager\logs' }
                else          { Join-Path $env:LOCALAPPDATA 'PathManager\logs' }
+    
     if (-not (Test-Path $logDir)) { New-Item -Path $logDir -ItemType Directory -Force | Out-Null }
 
-    $script:logFile = Join-Path $logDir "PathManager_$(Get-Date -Format 'yyyyMMdd').log"
+    $State.LogFile = Join-Path $logDir "PathManager_$(Get-Date -Format 'yyyyMMdd').log"
 
     $maxSize = 5MB
     $keep    = 5
-    if ((Test-Path $script:logFile) -and (Get-Item $script:logFile).Length -ge $maxSize) {
+    if ((Test-Path $State.LogFile) -and (Get-Item $State.LogFile).Length -ge $maxSize) {
         for ($i = $keep; $i -ge 1; $i--) {
-            $old = "$($script:logFile).$i"
-            $new = "$($script:logFile).$($i + 1)"
+            $old = "$($State.LogFile).$i"
+            $new = "$($State.LogFile).$($i + 1)"
             if ($i -eq $keep -and (Test-Path $old)) { Remove-Item $old -Force }
             if (Test-Path $old) { Rename-Item $old $new }
         }
-        Rename-Item $script:logFile "$($script:logFile).1"
+        Rename-Item $State.LogFile "$($State.LogFile).1"
     }
 }
 
-function WriteLog([string]$level, [string]$message) {
-    if (-not $script:logFile) { return }
+function Write-Log([string]$level, [string]$message) {
+    if (-not $State.LogFile) { return }
     $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $user = "$env:USERDOMAIN\$env:USERNAME"
     $line = "$ts  [$level]  $user  $message"
-    try { $line | Out-File -FilePath $script:logFile -Append -Encoding UTF8 } catch {}
+    try { $line | Out-File -FilePath $State.LogFile -Append -Encoding UTF8 } catch {}
 }
 
-# ── ANSI colors ───────────────────────────────────────────────────────────────────
+# ── 3. ANSI & Terminal Control ────────────────────────────────────────────────────
 $e    = [char]27
 $R    = "$e[0m";  $BOLD = "$e[1m";  $DIM  = "$e[2m"
 $CYN  = "$e[96m"; $YEL  = "$e[93m"; $GRN  = "$e[92m"
 $RED  = "$e[91m"; $BLU  = "$e[94m"; $GRY  = "$e[90m"; $WHT  = "$e[97m"
 $BBLU = "$e[44m"
 
-function EnableVT {
+function Enable-VT {
     try {
         Add-Type -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
