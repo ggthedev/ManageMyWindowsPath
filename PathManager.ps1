@@ -25,14 +25,6 @@ $State = @{
 }
 
 # ── 2. Logging Subsystem ──────────────────────────────────────────────────────────
-
-<#
-.SYNOPSIS
-    Initializes the logging subsystem and performs log rotation.
-.DESCRIPTION
-    Determines the correct log directory based on user privileges (ProgramData vs LocalAppData).
-    Implements a 5-file rotation policy, cycling out logs older than 5MB.
-#>
 function Init-Log {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     $logDir  = if ($isAdmin) { Join-Path $env:ProgramData 'PathManager\logs' }
@@ -55,14 +47,6 @@ function Init-Log {
     }
 }
 
-<#
-.SYNOPSIS
-    Appends a timestamped message to the active log file.
-.PARAMETER level
-    The severity level of the log (e.g., INFO, WARN, ERROR).
-.PARAMETER message
-    The details of the event to log.
-#>
 function Write-Log([string]$level, [string]$message) {
     if (-not $State.LogFile) { return }
     $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
@@ -245,20 +229,6 @@ function Save-Data {
 }
 
 # ── 6. UI Prompts ─────────────────────────────────────────────────────────────────
-
-<#
-.SYNOPSIS
-    Provides an interactive, inline text input prompt.
-.DESCRIPTION
-    Handles individual keystrokes (arrows, backspace, delete) to allow for inline
-    editing of strings without relying on Read-Host, maintaining the TUI layout.
-.PARAMETER prompt
-    The text to display before the input field.
-.PARAMETER default
-    The initial string value to populate the input field with.
-.OUTPUTS
-    [string] The user's inputted string, or $null if the user aborted (Escape).
-#>
 function Read-Prompt([string]$prompt, [string]$default = '') {
     Set-Cursor $true
     $buf  = $default; $pos = $buf.Length; $row = [Console]::WindowHeight - 1; $done = $false
@@ -290,14 +260,6 @@ function Read-Prompt([string]$prompt, [string]$default = '') {
     return $buf
 }
 
-<#
-.SYNOPSIS
-    Displays a simple Yes/No confirmation prompt.
-.PARAMETER msg
-    The question to pose to the user.
-.OUTPUTS
-    [bool] $true if the user presses 'Y' or 'y', otherwise $false.
-#>
 function Confirm-Prompt([string]$msg) {
     Set-Cursor $true
     $row = [Console]::WindowHeight - 1
@@ -310,9 +272,6 @@ function Confirm-Prompt([string]$msg) {
 }
 
 # ── 7. Business Logic (Controllers) ───────────────────────────────────────────────
-# (Note: Standardizing controller documentation format for brevity)
-
-<# .SYNOPSIS Prompts the user for a new PATH entry and adds it to the state. #>
 function Invoke-Add {
     $val = Read-Prompt 'New PATH entry:'
     if ([string]::IsNullOrWhiteSpace($val)) { $State.Msg = 'Add cancelled.'; $State.MsgOk = $true; return }
@@ -328,7 +287,6 @@ function Invoke-Add {
     Write-Log 'INFO' "ADD scope=$($State.Scope) entry='$val' exists=$exists"
 }
 
-<# .SYNOPSIS Opens the currently selected PATH entry in an interactive prompt for modification. #>
 function Invoke-Edit {
     if ($State.Items.Count -eq 0) { return }
     $cur = $State.Items[$State.Sel]
@@ -345,7 +303,6 @@ function Invoke-Edit {
     Write-Log 'INFO' "EDIT scope=$($State.Scope) index=$($State.Sel) old='$cur' new='$val'"
 }
 
-<# .SYNOPSIS Deletes the currently selected entry after prompting for confirmation. #>
 function Invoke-Delete {
     if ($State.Items.Count -eq 0) { return }
     $e    = $State.Items[$State.Sel]
@@ -360,7 +317,6 @@ function Invoke-Delete {
     }
 }
 
-<# .SYNOPSIS Swaps the currently selected item with the one directly above it, increasing its priority. #>
 function Invoke-MoveUp {
     $i = $State.Sel
     if ($i -le 0) { return }
@@ -372,7 +328,6 @@ function Invoke-MoveUp {
     Write-Log 'INFO' "MOVE scope=$($State.Scope) entry='$($State.Items[$State.Sel])' from=$i to=$($State.Sel)"
 }
 
-<# .SYNOPSIS Swaps the currently selected item with the one directly below it, decreasing its priority. #>
 function Invoke-MoveDown {
     $i = $State.Sel
     if ($i -ge $State.Items.Count - 1) { return }
@@ -384,7 +339,6 @@ function Invoke-MoveDown {
     Write-Log 'INFO' "MOVE scope=$($State.Scope) entry='$($State.Items[$State.Sel])' from=$i to=$($State.Sel)"
 }
 
-<# .SYNOPSIS Toggles between the 'User' and 'Machine' PATH scopes, reloading data. #>
 function Invoke-ToggleScope {
     if ($State.Dirty -and -not (Confirm-Prompt 'Discard unsaved changes and switch scope?')) {
         $State.Msg = 'Cancelled.'; $State.MsgOk = $true; return
@@ -397,7 +351,6 @@ function Invoke-ToggleScope {
     Write-Log 'INFO' "SCOPE from=$prevScope to=$($State.Scope) entries=$($State.Items.Count)"
 }
 
-<# .SYNOPSIS Discards any unsaved changes and re-reads the active scope from the registry. #>
 function Invoke-Reload {
     if ($State.Dirty -and -not (Confirm-Prompt 'Discard unsaved changes and reload?')) {
         $State.Msg = 'Cancelled.'; $State.MsgOk = $true; return
@@ -408,7 +361,6 @@ function Invoke-Reload {
     Write-Log 'INFO' "RELOAD scope=$($State.Scope) entries=$($State.Items.Count)"
 }
 
-<# .SYNOPSIS Initiates the shutdown sequence, prompting for unsaved changes if necessary. #>
 function Invoke-Quit {
     if ($State.Dirty) {
         if (Confirm-Prompt 'Quit with unsaved changes?') { $State.Run = $false }
@@ -418,14 +370,6 @@ function Invoke-Quit {
 }
 
 # ── 8. Render Engine ──────────────────────────────────────────────────────────────
-
-<#
-.SYNOPSIS
-    Paints the terminal user interface based on the current state model.
-.DESCRIPTION
-    Draws the header, lists visible PATH entries (highlighting missing directories in red), 
-    and displays the status footer and hotkey legend.
-#>
 function Draw-UI {
     [Console]::SetCursorPosition(0, 0)
 
@@ -514,16 +458,9 @@ $CharBindings = @{
 }
 
 # ── 10. Main Execution Loop ───────────────────────────────────────────────────────
-
-<#
-.SYNOPSIS
-    The core application loop.
-.DESCRIPTION
-    Initializes the terminal, handles render synchronization, blocks for user keyboard input,
-    and routes inputs via the Command Dictionaries to the relevant logic controllers.
-#>
 function Main {
     Init-Log
+    Init-Win32
     Enable-VT
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     Set-Cursor $false
