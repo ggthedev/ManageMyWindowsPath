@@ -204,183 +204,257 @@ function Read-Prompt([string]$prompt, [string]$default = '') {
             ([ConsoleKey]::End)        { $pos = $buf.Length }
             default {
                 if ($k.KeyChar -ne [char]0 -and -not [char]::IsControl($k.KeyChar)) {
-                    $buf = $buf.Insert($pos, [string]$k.KeyChar)
-                    $pos++
+                    $buf = $buf.Insert($pos, [string]$k.KeyChar); $pos++
                 }
             }
         }
     }
-
-    SetCursor $false
+    Set-Cursor $false
+    $State.Redraw = $true
     return $buf
 }
 
-function ConfirmPrompt([string]$msg) {
-    SetCursor $true
+function Confirm-Prompt([string]$msg) {
+    Set-Cursor $true
     $row = [Console]::WindowHeight - 1
-    [Console]::SetCursorPosition(0, $row)
-    [Console]::Write(' ' * (CW))
-    [Console]::SetCursorPosition(0, $row)
-    [Console]::Write("${YEL}${BOLD}  $msg  [y/N]: ${R}")
+    [Console]::SetCursorPosition(0, $row); [Console]::Write(' ' * (Get-Width))
+    [Console]::SetCursorPosition(0, $row); [Console]::Write("${YEL}${BOLD}  $msg  [y/N]: ${R}")
     $k = [Console]::ReadKey($true)
-    SetCursor $false
+    Set-Cursor $false
+    $State.Redraw = $true
     return ($k.KeyChar -eq 'y' -or $k.KeyChar -eq 'Y')
 }
 
-# ── Actions ───────────────────────────────────────────────────────────────────────
-function DoAdd {
-    $val = ReadLineInput 'New PATH entry:'
-    if ([string]::IsNullOrWhiteSpace($val)) {
-        $script:msg = 'Add cancelled.'; $script:msgOk = $true; return
-    }
+# ── 7. Business Logic (Controllers) ───────────────────────────────────────────────
+function Invoke-Add {
+    $val = Read-Prompt 'New PATH entry:'
+    if ([string]::IsNullOrWhiteSpace($val)) { $State.Msg = 'Add cancelled.'; $State.MsgOk = $true; return }
     $val = $val.Trim().Trim('"')
-    if ($script:items.Contains($val)) {
-        $script:msg = 'Duplicate — entry already exists.'; $script:msgOk = $false; return
-    }
-    $script:items.Add($val)
-    $script:sel   = $script:items.Count - 1
-    $script:dirty = $true
-    $exists = [System.IO.Directory]::Exists($val)
-    $script:msg   = if ($exists) { "Added: $val" } else { "Added (directory not found on disk): $val" }
-    $script:msgOk = $true
-    WriteLog 'INFO' "ADD scope=$($script:scope) entry='$val' exists=$exists"
+    if ($State.Items.Contains($val)) { $State.Msg = 'Duplicate — entry already exists.'; $State.MsgOk = $false; return }
+    
+    $State.Items.Add($val)
+    $State.Sel    = $State.Items.Count - 1
+    $State.Dirty  = $true
+    $exists       = [System.IO.Directory]::Exists($val)
+    $State.Msg    = if ($exists) { "Added: $val" } else { "Added (directory not found on disk): $val" }
+    $State.MsgOk  = $true
+    Write-Log 'INFO' "ADD scope=$($State.Scope) entry='$val' exists=$exists"
 }
 
-function DoEdit {
-    if ($script:items.Count -eq 0) { return }
-    $cur = $script:items[$script:sel]
-    $val = ReadLineInput 'Edit entry:' $cur
-    if ($null -eq $val) { $script:msg = 'Edit cancelled.'; $script:msgOk = $true; return }
+function Invoke-Edit {
+    if ($State.Items.Count -eq 0) { return }
+    $cur = $State.Items[$State.Sel]
+    $val = Read-Prompt 'Edit entry:' $cur
+    if ($null -eq $val) { $State.Msg = 'Edit cancelled.'; $State.MsgOk = $true; return }
     $val = $val.Trim().Trim('"')
-    if ([string]::IsNullOrWhiteSpace($val)) { $script:msg = 'Value cannot be empty.'; $script:msgOk = $false; return }
-    if ($val -eq $cur)                      { $script:msg = 'No changes made.';        $script:msgOk = $true;  return }
-    $script:items[$script:sel] = $val
-    $script:dirty = $true
-    $script:msg   = "Updated entry $($script:sel + 1)."
-    $script:msgOk = $true
-    WriteLog 'INFO' "EDIT scope=$($script:scope) index=$($script:sel) old='$cur' new='$val'"
+    if ([string]::IsNullOrWhiteSpace($val)) { $State.Msg = 'Value cannot be empty.'; $State.MsgOk = $false; return }
+    if ($val -eq $cur) { $State.Msg = 'No changes made.'; $State.MsgOk = $true; return }
+    
+    $State.Items[$State.Sel] = $val
+    $State.Dirty = $true
+    $State.Msg   = "Updated entry $($State.Sel + 1)."
+    $State.MsgOk = $true
+    Write-Log 'INFO' "EDIT scope=$($State.Scope) index=$($State.Sel) old='$cur' new='$val'"
 }
 
-function DoDelete {
-    if ($script:items.Count -eq 0) { return }
-    $e    = $script:items[$script:sel]
+function Invoke-Delete {
+    if ($State.Items.Count -eq 0) { return }
+    $e    = $State.Items[$State.Sel]
     $disp = if ($e.Length -gt 55) { $e.Substring(0, 52) + '...' } else { $e }
-    if (ConfirmPrompt "Delete '$disp'?") {
-        $script:items.RemoveAt($script:sel)
-        ClampSel
-        $script:dirty = $true; $script:msg = 'Entry deleted.'; $script:msgOk = $true
-        WriteLog 'INFO' "DELETE scope=$($script:scope) entry='$e'"
+    if (Confirm-Prompt "Delete '$disp'?") {
+        $State.Items.RemoveAt($State.Sel)
+        Clamp-Sel
+        $State.Dirty = $true; $State.Msg = 'Entry deleted.'; $State.MsgOk = $true
+        Write-Log 'INFO' "DELETE scope=$($State.Scope) entry='$e'"
     } else {
-        $script:msg = 'Delete cancelled.'; $script:msgOk = $true
+        $State.Msg = 'Delete cancelled.'; $State.MsgOk = $true
     }
 }
 
-function DoMoveUp {
-    $i = $script:sel
+function Invoke-MoveUp {
+    $i = $State.Sel
     if ($i -le 0) { return }
-    $tmp = $script:items[$i - 1]
-    $script:items[$i - 1] = $script:items[$i]
-    $script:items[$i]     = $tmp
-    $script:sel--
-    $script:dirty = $true; $script:msg = 'Moved up.'; $script:msgOk = $true
-    WriteLog 'INFO' "MOVE scope=$($script:scope) entry='$($script:items[$script:sel])' from=$i to=$($script:sel)"
+    $tmp = $State.Items[$i - 1]
+    $State.Items[$i - 1] = $State.Items[$i]
+    $State.Items[$i]     = $tmp
+    $State.Sel--
+    $State.Dirty = $true; $State.Msg = 'Moved up.'; $State.MsgOk = $true
+    Write-Log 'INFO' "MOVE scope=$($State.Scope) entry='$($State.Items[$State.Sel])' from=$i to=$($State.Sel)"
 }
 
-function DoMoveDown {
-    $i = $script:sel
-    if ($i -ge $script:items.Count - 1) { return }
-    $tmp = $script:items[$i + 1]
-    $script:items[$i + 1] = $script:items[$i]
-    $script:items[$i]     = $tmp
-    $script:sel++
-    $script:dirty = $true; $script:msg = 'Moved down.'; $script:msgOk = $true
-    WriteLog 'INFO' "MOVE scope=$($script:scope) entry='$($script:items[$script:sel])' from=$i to=$($script:sel)"
+function Invoke-MoveDown {
+    $i = $State.Sel
+    if ($i -ge $State.Items.Count - 1) { return }
+    $tmp = $State.Items[$i + 1]
+    $State.Items[$i + 1] = $State.Items[$i]
+    $State.Items[$i]     = $tmp
+    $State.Sel++
+    $State.Dirty = $true; $State.Msg = 'Moved down.'; $State.MsgOk = $true
+    Write-Log 'INFO' "MOVE scope=$($State.Scope) entry='$($State.Items[$State.Sel])' from=$i to=$($State.Sel)"
 }
 
-function DoToggleScope {
-    if ($script:dirty -and -not (ConfirmPrompt 'Discard unsaved changes and switch scope?')) {
-        $script:msg = 'Cancelled.'; $script:msgOk = $true; return
+function Invoke-ToggleScope {
+    if ($State.Dirty -and -not (Confirm-Prompt 'Discard unsaved changes and switch scope?')) {
+        $State.Msg = 'Cancelled.'; $State.MsgOk = $true; return
     }
-    $prevScope    = $script:scope
-    $prevSel      = $script:sel
-    $script:scope = if ($script:scope -eq 'User') { 'Machine' } else { 'User' }
-    LoadEntries
-    $script:sel   = [Math]::Min($prevSel, [Math]::Max(0, $script:items.Count - 1))
-    $script:msg   = "Switched to $($script:scope) PATH"
-    $script:msgOk = $true
-    WriteLog 'INFO' "SCOPE from=$prevScope to=$($script:scope) entries=$($script:items.Count)"
+    $prevScope   = $State.Scope
+    $State.Scope = if ($State.Scope -eq 'User') { 'Machine' } else { 'User' }
+    Load-Data
+    $State.Msg   = "Switched to $($State.Scope) PATH"
+    $State.MsgOk = $true
+    Write-Log 'INFO' "SCOPE from=$prevScope to=$($State.Scope) entries=$($State.Items.Count)"
 }
 
-function DoReload {
-    if ($script:dirty -and -not (ConfirmPrompt 'Discard unsaved changes and reload?')) {
-        $script:msg = 'Cancelled.'; $script:msgOk = $true; return
+function Invoke-Reload {
+    if ($State.Dirty -and -not (Confirm-Prompt 'Discard unsaved changes and reload?')) {
+        $State.Msg = 'Cancelled.'; $State.MsgOk = $true; return
     }
-    LoadEntries
-    $script:msg   = "Reloaded $($script:scope) PATH"
-    $script:msgOk = $true
-    WriteLog 'INFO' "RELOAD scope=$($script:scope) entries=$($script:items.Count)"
+    Load-Data
+    $State.Msg   = "Reloaded $($State.Scope) PATH"
+    $State.MsgOk = $true
+    Write-Log 'INFO' "RELOAD scope=$($State.Scope) entries=$($State.Items.Count)"
 }
 
-# ── Main loop ─────────────────────────────────────────────────────────────────────
-function SetCursor([bool]$visible) { try { [Console]::CursorVisible = $visible } catch {} }
+function Invoke-Quit {
+    if ($State.Dirty) {
+        if (Confirm-Prompt 'Quit with unsaved changes?') { $State.Run = $false }
+    } else {
+        $State.Run = $false
+    }
+}
 
+# ── 8. Render Engine ──────────────────────────────────────────────────────────────
+function Draw-UI {
+    [Console]::SetCursorPosition(0, 0)
+
+    # Title bar
+    $uTab  = if ($State.Scope -eq 'User')    { "${BBLU}${WHT}${BOLD} USER ${R}"   } else { "${GRY} USER ${R}"   }
+    $mTab  = if ($State.Scope -eq 'Machine') { "${BBLU}${WHT}${BOLD} SYSTEM ${R}" } else { "${GRY} SYSTEM ${R}" }
+    $dFlag = if ($State.Dirty) { "${YEL}${BOLD} [unsaved]${R}" } else { "${GRN} [saved]${R}" }
+    Write-Row "${CYN}${BOLD}  PATH MANAGER${R}   $uTab $mTab   $dFlag"
+    Write-Sep '=' $BLU
+
+    # Column header
+    Write-Row "${GRY}${BOLD}   #   Path${R}"
+    Write-Sep '-' $GRY
+
+    # Entry rows
+    $vis   = Get-Vis
+    $count = $State.Items.Count
+    $W     = Get-Width
+
+    if ($count -eq 0) {
+        Write-Row "${DIM}   (no entries)  Press A to add one.${R}"
+        for ($i = 1; $i -lt $vis; $i++) { Write-Row }
+    } else {
+        for ($row = 0; $row -lt $vis; $row++) {
+            $idx = $row + $State.Scroll
+            if ($idx -ge $count) { Write-Row; continue }
+
+            $path    = $State.Items[$idx]
+            $num     = '{0,3}' -f ($idx + 1)
+            $isSel   = ($idx -eq $State.Sel)
+            $exists  = [System.IO.Directory]::Exists($path) -or [System.IO.File]::Exists($path)
+            $maxLen  = $W - 9
+            $display = if ($path.Length -gt $maxLen) { $path.Substring(0, $maxLen - 3) + '...' } else { $path }
+
+            if ($isSel) {
+                $pCol = if ($exists) { $WHT } else { $RED }
+                Write-Row "${BBLU}${YEL}${BOLD} > ${R}${BBLU}${GRY}$num ${R}${BBLU}${pCol} $display ${R}"
+            } else {
+                $pCol = if ($exists) { $R } else { $RED }
+                Write-Row "   $num  ${pCol}$display${R}"
+            }
+        }
+    }
+
+    # Footer
+    Write-Sep '-' $GRY
+
+    $total = if ($count -gt 0) { (($State.Items.ToArray()) -join ';').Length } else { 0 }
+    $info  = if ($count -gt $vis) {
+        "${GRY}  $count entries, showing $($State.Scroll+1)-$([Math]::Min($State.Scroll+$vis,$count))   PATH length: $total chars${R}"
+    } else {
+        "${GRY}  $count entries   PATH length: $total chars${R}"
+    }
+    Write-Row $info
+
+    $mCol = if ($State.MsgOk) { $GRN } else { $RED }
+    Write-Row $(if ($State.Msg) { "${mCol}  $($State.Msg)${R}" } else { '' })
+
+    Write-Sep '=' $BLU
+    Write-Row "${GRY}  ${CYN}Up/Down${GRY} Navigate   ${CYN}A${GRY} Add   ${CYN}E${GRY} Edit   ${CYN}Del${GRY}/${CYN}X${GRY} Delete   ${CYN}[${GRY}/${CYN}]${GRY} Move Up/Down   ${CYN}Tab${GRY} Scope${R}"
+    Write-Row "${GRY}  ${CYN}Home/End${GRY} First/Last   ${CYN}PgUp/Dn${GRY} Page   ${CYN}S${GRY} Save   ${CYN}R${GRY} Reload   ${CYN}Q/Esc${GRY} Quit   ${DIM}Log: $($State.LogFile)${R}"
+}
+
+# ── 9. Command Routing ────────────────────────────────────────────────────────────
+$KeyBindings = @{
+    ([ConsoleKey]::UpArrow)   = { if ($State.Sel -gt 0) { $State.Sel--; $State.Redraw = $true } }
+    ([ConsoleKey]::DownArrow) = { if ($State.Sel -lt $State.Items.Count - 1) { $State.Sel++; $State.Redraw = $true } }
+    ([ConsoleKey]::PageUp)    = { $State.Sel = [Math]::Max(0, $State.Sel - (Get-Vis)); $State.Redraw = $true }
+    ([ConsoleKey]::PageDown)  = { $State.Sel = [Math]::Min([Math]::Max(0, $State.Items.Count - 1), $State.Sel + (Get-Vis)); $State.Redraw = $true }
+    ([ConsoleKey]::Home)      = { $State.Sel = 0; $State.Redraw = $true }
+    ([ConsoleKey]::End)       = { $State.Sel = [Math]::Max(0, $State.Items.Count - 1); $State.Redraw = $true }
+    ([ConsoleKey]::Delete)    = { Invoke-Delete }
+    ([ConsoleKey]::Tab)       = { Invoke-ToggleScope }
+    ([ConsoleKey]::Escape)    = { Invoke-Quit }
+}
+
+$CharBindings = @{
+    'a' = { Invoke-Add }
+    'e' = { Invoke-Edit }
+    'x' = { Invoke-Delete }
+    '[' = { Invoke-MoveUp }
+    ']' = { Invoke-MoveDown }
+    's' = { Save-Data }
+    'r' = { Invoke-Reload }
+    'q' = { Invoke-Quit }
+}
+
+# ── 10. Main Execution Loop ───────────────────────────────────────────────────────
 function Main {
-    InitLog
-    EnableVT
+    Init-Log
+    Enable-VT
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    SetCursor $false
+    Set-Cursor $false
 
-    WriteLog 'INFO' '── SESSION START ──'
+    Write-Log 'INFO' '── SESSION START ──'
     Clear-Host
-    LoadEntries
+    Load-Data
 
-    $run = $true
-    while ($run) {
-        SyncScroll
-        DrawUI
-
-        $k     = [Console]::ReadKey($true)
-        $shift = ($k.Modifiers -band [ConsoleModifiers]::Shift)   -ne 0
-        $ctrl  = ($k.Modifiers -band [ConsoleModifiers]::Control) -ne 0
-        $script:msg = ''
-
-        if ($ctrl -and $k.Key -eq [ConsoleKey]::C) { $run = $false; continue }
-
-        $kk = $k.Key
-        if      ($kk -eq [ConsoleKey]::UpArrow)   { if ($script:sel -gt 0)                           { $script:sel-- } }
-        elseif  ($kk -eq [ConsoleKey]::DownArrow) { if ($script:sel -lt $script:items.Count - 1)     { $script:sel++ } }
-        elseif  ($kk -eq [ConsoleKey]::PageUp)    { $script:sel = [Math]::Max(0, $script:sel - (CVis)) }
-        elseif  ($kk -eq [ConsoleKey]::PageDown)  { $script:sel = [Math]::Min([Math]::Max(0, $script:items.Count - 1), $script:sel + (CVis)) }
-        elseif  ($kk -eq [ConsoleKey]::Home)      { $script:sel = 0 }
-        elseif  ($kk -eq [ConsoleKey]::End)       { $script:sel = [Math]::Max(0, $script:items.Count - 1) }
-        elseif  ($kk -eq [ConsoleKey]::Delete)    { DoDelete }
-        elseif  ($kk -eq [ConsoleKey]::Tab)       { DoToggleScope }
-        elseif  ($kk -eq [ConsoleKey]::Escape)    {
-            if ($script:dirty) { if (ConfirmPrompt 'Quit with unsaved changes?') { $run = $false } }
-            else { $run = $false }
+    while ($State.Run) {
+        if ($State.Redraw) {
+            Sync-Scroll
+            Draw-UI
+            $State.Redraw = $false # Reset redraw flag after painting
         }
 
-        switch ([string][char]::ToLower($k.KeyChar)) {
-            'a' { DoAdd }
-            'e' { DoEdit }
-            'x' { DoDelete }
-            '[' { DoMoveUp }
-            ']' { DoMoveDown }
-            's' { SaveEntries }
-            'r' { DoReload }
-            'q' {
-                if ($script:dirty) { if (ConfirmPrompt 'Quit with unsaved changes?') { $run = $false } }
-                else { $run = $false }
+        # Halt and wait for input
+        $k    = [Console]::ReadKey($true)
+        $ctrl = ($k.Modifiers -band [ConsoleModifiers]::Control) -ne 0
+        
+        # Clear previous transient messages on any keypress
+        if ($State.Msg) { $State.Msg = ''; $State.Redraw = $true }
+
+        if ($ctrl -and $k.Key -eq [ConsoleKey]::C) { $State.Run = $false; continue }
+
+        # Route input via Command Dictionaries
+        if ($KeyBindings.ContainsKey($k.Key)) {
+            & $KeyBindings[$k.Key]
+        } else {
+            $char = [string][char]::ToLower($k.KeyChar)
+            if ($CharBindings.ContainsKey($char)) {
+                & $CharBindings[$char]
             }
         }
     }
 
     Clear-Host
-    SetCursor $true
-    WriteLog 'INFO' '── SESSION END ──'
+    Set-Cursor $true
+    Write-Log 'INFO' '── SESSION END ──'
     Write-Host 'PATH Manager closed.'
-    Write-Host "Log: $($script:logFile)"
+    Write-Host "Log: $($State.LogFile)"
 }
 
-try   { Main }
-finally { SetCursor $true }
+try     { Main }
+finally { Set-Cursor $true }
