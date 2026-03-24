@@ -310,6 +310,9 @@ function Confirm-Prompt([string]$msg) {
 }
 
 # ── 7. Business Logic (Controllers) ───────────────────────────────────────────────
+# (Note: Standardizing controller documentation format for brevity)
+
+<# .SYNOPSIS Prompts the user for a new PATH entry and adds it to the state. #>
 function Invoke-Add {
     $val = Read-Prompt 'New PATH entry:'
     if ([string]::IsNullOrWhiteSpace($val)) { $State.Msg = 'Add cancelled.'; $State.MsgOk = $true; return }
@@ -325,6 +328,7 @@ function Invoke-Add {
     Write-Log 'INFO' "ADD scope=$($State.Scope) entry='$val' exists=$exists"
 }
 
+<# .SYNOPSIS Opens the currently selected PATH entry in an interactive prompt for modification. #>
 function Invoke-Edit {
     if ($State.Items.Count -eq 0) { return }
     $cur = $State.Items[$State.Sel]
@@ -341,6 +345,7 @@ function Invoke-Edit {
     Write-Log 'INFO' "EDIT scope=$($State.Scope) index=$($State.Sel) old='$cur' new='$val'"
 }
 
+<# .SYNOPSIS Deletes the currently selected entry after prompting for confirmation. #>
 function Invoke-Delete {
     if ($State.Items.Count -eq 0) { return }
     $e    = $State.Items[$State.Sel]
@@ -355,6 +360,7 @@ function Invoke-Delete {
     }
 }
 
+<# .SYNOPSIS Swaps the currently selected item with the one directly above it, increasing its priority. #>
 function Invoke-MoveUp {
     $i = $State.Sel
     if ($i -le 0) { return }
@@ -366,6 +372,7 @@ function Invoke-MoveUp {
     Write-Log 'INFO' "MOVE scope=$($State.Scope) entry='$($State.Items[$State.Sel])' from=$i to=$($State.Sel)"
 }
 
+<# .SYNOPSIS Swaps the currently selected item with the one directly below it, decreasing its priority. #>
 function Invoke-MoveDown {
     $i = $State.Sel
     if ($i -ge $State.Items.Count - 1) { return }
@@ -377,6 +384,7 @@ function Invoke-MoveDown {
     Write-Log 'INFO' "MOVE scope=$($State.Scope) entry='$($State.Items[$State.Sel])' from=$i to=$($State.Sel)"
 }
 
+<# .SYNOPSIS Toggles between the 'User' and 'Machine' PATH scopes, reloading data. #>
 function Invoke-ToggleScope {
     if ($State.Dirty -and -not (Confirm-Prompt 'Discard unsaved changes and switch scope?')) {
         $State.Msg = 'Cancelled.'; $State.MsgOk = $true; return
@@ -389,6 +397,7 @@ function Invoke-ToggleScope {
     Write-Log 'INFO' "SCOPE from=$prevScope to=$($State.Scope) entries=$($State.Items.Count)"
 }
 
+<# .SYNOPSIS Discards any unsaved changes and re-reads the active scope from the registry. #>
 function Invoke-Reload {
     if ($State.Dirty -and -not (Confirm-Prompt 'Discard unsaved changes and reload?')) {
         $State.Msg = 'Cancelled.'; $State.MsgOk = $true; return
@@ -399,6 +408,7 @@ function Invoke-Reload {
     Write-Log 'INFO' "RELOAD scope=$($State.Scope) entries=$($State.Items.Count)"
 }
 
+<# .SYNOPSIS Initiates the shutdown sequence, prompting for unsaved changes if necessary. #>
 function Invoke-Quit {
     if ($State.Dirty) {
         if (Confirm-Prompt 'Quit with unsaved changes?') { $State.Run = $false }
