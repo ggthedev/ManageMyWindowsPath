@@ -133,13 +133,6 @@ function Load-Data {
     $State.Redraw = $true
 }
 
-<#
-.SYNOPSIS
-    Commits the application state back to the Windows registry.
-.DESCRIPTION
-    Enforces privilege checks to ensure the user has Administrator rights before
-    attempting to write to the 'Machine' (System) scope. Updates the dirty flag on success.
-#>
 function Save-Data {
     if ($State.Scope -eq 'Machine') {
         $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -153,7 +146,20 @@ function Save-Data {
     }
     try {
         $joined = ($State.Items.ToArray() | Where-Object { $_ -ne '' }) -join ';'
-        [Environment]::SetEnvironmentVariable('PATH', $joined, $State.Scope)
+        $regPath = if ($State.Scope -eq 'User') { 'HKCU:\Environment' } else { 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' }
+        
+        # Preserve dynamic variables by saving as ExpandString (REG_EXPAND_SZ) if % is present
+        $type = if ($joined -match '%') { 'ExpandString' } else { 'String' }
+        Set-ItemProperty -Path $regPath -Name 'Path' -Value $joined -Type $type -Force
+        
+        # Broadcast WM_SETTINGCHANGE so Explorer/OS immediately sees the change
+        try {
+            $HWND_BROADCAST   = [IntPtr]0xffff
+            $WM_SETTINGCHANGE = 0x001A
+            $result           = [UIntPtr]::Zero
+            [WinCon.Native]::SendMessageTimeout($HWND_BROADCAST, $WM_SETTINGCHANGE, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$result) | Out-Null
+        } catch {}
+
         $State.Dirty  = $false
         $State.Msg    = "Saved $($State.Scope) PATH  ($($State.Items.Count) entries)"
         $State.MsgOk  = $true
