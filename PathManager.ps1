@@ -88,6 +88,7 @@ function SaveEntries {
         if (-not $isAdmin) {
             $script:msg   = 'Administrator rights required to modify System PATH'
             $script:msgOk = $false
+            WriteLog 'WARN' "Save blocked — not running as Administrator (scope=$($script:scope))"
             return
         }
     }
@@ -97,9 +98,11 @@ function SaveEntries {
         $script:dirty = $false
         $script:msg   = "Saved $($script:scope) PATH  ($($script:items.Count) entries)"
         $script:msgOk = $true
+        WriteLog 'INFO' "SAVE scope=$($script:scope) entries=$($script:items.Count) length=$($joined.Length)"
     } catch {
         $script:msg   = "Save failed: $($_.Exception.Message)"
         $script:msgOk = $false
+        WriteLog 'ERROR' "Save failed: $($_.Exception.Message)"
     }
 }
 
@@ -268,6 +271,7 @@ function DoAdd {
     $exists = [System.IO.Directory]::Exists($val)
     $script:msg   = if ($exists) { "Added: $val" } else { "Added (directory not found on disk): $val" }
     $script:msgOk = $true
+    WriteLog 'INFO' "ADD scope=$($script:scope) entry='$val' exists=$exists"
 }
 
 function DoEdit {
@@ -282,6 +286,7 @@ function DoEdit {
     $script:dirty = $true
     $script:msg   = "Updated entry $($script:sel + 1)."
     $script:msgOk = $true
+    WriteLog 'INFO' "EDIT scope=$($script:scope) index=$($script:sel) old='$cur' new='$val'"
 }
 
 function DoDelete {
@@ -292,6 +297,7 @@ function DoDelete {
         $script:items.RemoveAt($script:sel)
         ClampSel
         $script:dirty = $true; $script:msg = 'Entry deleted.'; $script:msgOk = $true
+        WriteLog 'INFO' "DELETE scope=$($script:scope) entry='$e'"
     } else {
         $script:msg = 'Delete cancelled.'; $script:msgOk = $true
     }
@@ -305,6 +311,7 @@ function DoMoveUp {
     $script:items[$i]     = $tmp
     $script:sel--
     $script:dirty = $true; $script:msg = 'Moved up.'; $script:msgOk = $true
+    WriteLog 'INFO' "MOVE scope=$($script:scope) entry='$($script:items[$script:sel])' from=$i to=$($script:sel)"
 }
 
 function DoMoveDown {
@@ -315,18 +322,21 @@ function DoMoveDown {
     $script:items[$i]     = $tmp
     $script:sel++
     $script:dirty = $true; $script:msg = 'Moved down.'; $script:msgOk = $true
+    WriteLog 'INFO' "MOVE scope=$($script:scope) entry='$($script:items[$script:sel])' from=$i to=$($script:sel)"
 }
 
 function DoToggleScope {
     if ($script:dirty -and -not (ConfirmPrompt 'Discard unsaved changes and switch scope?')) {
         $script:msg = 'Cancelled.'; $script:msgOk = $true; return
     }
+    $prevScope    = $script:scope
     $prevSel      = $script:sel
     $script:scope = if ($script:scope -eq 'User') { 'Machine' } else { 'User' }
     LoadEntries
     $script:sel   = [Math]::Min($prevSel, [Math]::Max(0, $script:items.Count - 1))
     $script:msg   = "Switched to $($script:scope) PATH"
     $script:msgOk = $true
+    WriteLog 'INFO' "SCOPE from=$prevScope to=$($script:scope) entries=$($script:items.Count)"
 }
 
 function DoReload {
@@ -336,16 +346,19 @@ function DoReload {
     LoadEntries
     $script:msg   = "Reloaded $($script:scope) PATH"
     $script:msgOk = $true
+    WriteLog 'INFO' "RELOAD scope=$($script:scope) entries=$($script:items.Count)"
 }
 
 # ── Main loop ─────────────────────────────────────────────────────────────────────
 function SetCursor([bool]$visible) { try { [Console]::CursorVisible = $visible } catch {} }
 
 function Main {
+    InitLog
     EnableVT
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     SetCursor $false
 
+    WriteLog 'INFO' '── SESSION START ──'
     Clear-Host
     LoadEntries
 
