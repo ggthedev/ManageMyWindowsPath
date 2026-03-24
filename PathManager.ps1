@@ -78,6 +78,13 @@ $CYN  = "$e[96m"; $YEL  = "$e[93m"; $GRN  = "$e[92m"
 $RED  = "$e[91m"; $BLU  = "$e[94m"; $GRY  = "$e[90m"; $WHT  = "$e[97m"
 $BBLU = "$e[44m"
 
+<#
+.SYNOPSIS
+    Enables Virtual Terminal (VT) processing for the current console.
+.DESCRIPTION
+    Uses P/Invoke to modify the console mode, allowing standard Windows consoles
+    (like ConHost) to correctly render ANSI color and escape sequences.
+#>
 function Enable-VT {
     try {
         Add-Type -MemberDefinition @'
@@ -92,25 +99,69 @@ function Enable-VT {
     } catch {}
 }
 
+<#
+.SYNOPSIS
+    Toggles the visibility of the console cursor.
+.PARAMETER visible
+    Boolean indicating whether the cursor should be shown ($true) or hidden ($false).
+#>
 function Set-Cursor([bool]$visible) { try { [Console]::CursorVisible = $visible } catch {} }
 
 # ── 4. Layout & Render Helpers ────────────────────────────────────────────────────
+
+<#
+.SYNOPSIS
+    Calculates the functional width of the console window.
+.OUTPUTS
+    [int] The window width, clamped to a minimum of 60 columns.
+#>
 function Get-Width { return [Math]::Max(60, [Console]::WindowWidth) }
+
+<#
+.SYNOPSIS
+    Calculates the number of visible rows available for the list view.
+.OUTPUTS
+    [int] The visible row count, accounting for header and footer space.
+#>
 function Get-Vis   { return [Math]::Max(3,  [Console]::WindowHeight - 11) }
 
+<#
+.SYNOPSIS
+    Removes ANSI escape sequences from a string.
+.DESCRIPTION
+    Used primarily to calculate the true printable length of a string for layout padding.
+.PARAMETER s
+    The string containing ANSI codes.
+.OUTPUTS
+    [string] The stripped, plain-text string.
+#>
 function Strip-Ansi([string]$s) {
     return [System.Text.RegularExpressions.Regex]::Replace($s, '\x1b\[[0-9;]*m', '')
 }
 
+<#
+.SYNOPSIS
+    Writes a line to the console, padding it with spaces to clear the row.
+.PARAMETER line
+    The formatted string to write.
+#>
 function Write-Row([string]$line = '') {
     $pad = [Math]::Max(0, (Get-Width) - (Strip-Ansi $line).Length)
     [Console]::Write($line + (' ' * $pad) + "`n")
 }
 
+<#
+.SYNOPSIS
+    Writes a horizontal separator line across the console width.
+#>
 function Write-Sep([string]$ch = '-', [string]$col = $GRY) {
     Write-Row "$col$($ch * (Get-Width))$R"
 }
 
+<#
+.SYNOPSIS
+    Adjusts the scroll position to ensure the selected item remains visible.
+#>
 function Sync-Scroll {
     $vis = Get-Vis
     if ($State.Sel -lt $State.Scroll) {
