@@ -99,162 +99,97 @@ function Enable-VT {
     } catch {}
 }
 
-# ── State ─────────────────────────────────────────────────────────────────────────
-$script:scope  = 'User'
-$script:items  = [System.Collections.Generic.List[string]]::new()
-$script:sel    = 0
-$script:scroll = 0
-$script:dirty  = $false
-$script:msg    = ''
-$script:msgOk  = $true
+function Set-Cursor([bool]$visible) { try { [Console]::CursorVisible = $visible } catch {} }
 
-# ── Data I/O ──────────────────────────────────────────────────────────────────────
-function LoadEntries {
-    $raw = [Environment]::GetEnvironmentVariable('PATH', $script:scope)
-    $arr = if ([string]::IsNullOrWhiteSpace($raw)) { @() }
-           else { @($raw -split ';' | Where-Object { $_ -ne '' }) }
-    $script:items  = [System.Collections.Generic.List[string]]$arr
-    $script:sel    = [Math]::Min($script:sel, [Math]::Max(0, $script:items.Count - 1))
-    $script:scroll = 0
-    $script:dirty  = $false
+# ── 4. Layout & Render Helpers ────────────────────────────────────────────────────
+function Get-Width { return [Math]::Max(60, [Console]::WindowWidth) }
+function Get-Vis   { return [Math]::Max(3,  [Console]::WindowHeight - 11) }
+
+function Strip-Ansi([string]$s) {
+    return [System.Text.RegularExpressions.Regex]::Replace($s, '\x1b\[[0-9;]*m', '')
 }
 
-function SaveEntries {
-    if ($script:scope -eq 'Machine') {
+function Write-Row([string]$line = '') {
+    $pad = [Math]::Max(0, (Get-Width) - (Strip-Ansi $line).Length)
+    [Console]::Write($line + (' ' * $pad) + "`n")
+}
+
+function Write-Sep([string]$ch = '-', [string]$col = $GRY) {
+    Write-Row "$col$($ch * (Get-Width))$R"
+}
+
+function Sync-Scroll {
+    $vis = Get-Vis
+    if ($State.Sel -lt $State.Scroll) {
+        $State.Scroll = $State.Sel
+    } elseif ($State.Sel -ge ($State.Scroll + $vis)) {
+        $State.Scroll = $State.Sel - $vis + 1
+    }
+    $State.Scroll = [Math]::Max(0, $State.Scroll)
+}
+
+function Clamp-Sel {
+    $n = $State.Items.Count
+    $State.Sel = if ($n -eq 0) { 0 } else { [Math]::Max(0, [Math]::Min($State.Sel, $n - 1)) }
+}
+
+# ── 5. Data I/O (Robust Initialization) ───────────────────────────────────────────
+function Load-Data {
+    try {
+        $raw = [Environment]::GetEnvironmentVariable('PATH', $State.Scope)
+        $State.Items.Clear()
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            $raw -split ';' | Where-Object { $_ -ne '' } | ForEach-Object { $State.Items.Add($_) }
+        }
+        $State.Sel    = [Math]::Min($State.Sel, [Math]::Max(0, $State.Items.Count - 1))
+        $State.Scroll = 0
+        $State.Dirty  = $false
+        $State.Msg    = "Loaded $($State.Scope) PATH successfully."
+        $State.MsgOk  = $true
+    } catch {
+        # Fallback error handling if registry read fails
+        $State.Items.Clear()
+        $State.Msg   = "CRITICAL ERROR reading PATH: $($_.Exception.Message)"
+        $State.MsgOk = $false
+        Write-Log 'ERROR' "Failed to read PATH: $($_.Exception.Message)"
+    }
+    $State.Redraw = $true
+}
+
+function Save-Data {
+    if ($State.Scope -eq 'Machine') {
         $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
         if (-not $isAdmin) {
-            $script:msg   = 'Administrator rights required to modify System PATH'
-            $script:msgOk = $false
-            WriteLog 'WARN' "Save blocked — not running as Administrator (scope=$($script:scope))"
+            $State.Msg   = 'Administrator rights required to modify System PATH'
+            $State.MsgOk = $false
+            $State.Redraw = $true
+            Write-Log 'WARN' "Save blocked — not running as Administrator (scope=$($State.Scope))"
             return
         }
     }
     try {
-        $joined = ($script:items.ToArray() | Where-Object { $_ -ne '' }) -join ';'
-        [Environment]::SetEnvironmentVariable('PATH', $joined, $script:scope)
-        $script:dirty = $false
-        $script:msg   = "Saved $($script:scope) PATH  ($($script:items.Count) entries)"
-        $script:msgOk = $true
-        WriteLog 'INFO' "SAVE scope=$($script:scope) entries=$($script:items.Count) length=$($joined.Length)"
+        $joined = ($State.Items.ToArray() | Where-Object { $_ -ne '' }) -join ';'
+        [Environment]::SetEnvironmentVariable('PATH', $joined, $State.Scope)
+        $State.Dirty  = $false
+        $State.Msg    = "Saved $($State.Scope) PATH  ($($State.Items.Count) entries)"
+        $State.MsgOk  = $true
+        Write-Log 'INFO' "SAVE scope=$($State.Scope) entries=$($State.Items.Count) length=$($joined.Length)"
     } catch {
-        $script:msg   = "Save failed: $($_.Exception.Message)"
-        $script:msgOk = $false
-        WriteLog 'ERROR' "Save failed: $($_.Exception.Message)"
+        $State.Msg   = "Save failed: $($_.Exception.Message)"
+        $State.MsgOk = $false
+        Write-Log 'ERROR' "Save failed: $($_.Exception.Message)"
     }
+    $State.Redraw = $true
 }
 
-# ── Layout helpers ────────────────────────────────────────────────────────────────
-function CW   { return [Math]::Max(60, [Console]::WindowWidth) }
-function CVis { return [Math]::Max(3,  [Console]::WindowHeight - 11) }
-
-function StripAnsi([string]$s) {
-    return [System.Text.RegularExpressions.Regex]::Replace($s, '\x1b\[[0-9;]*m', '')
-}
-
-function WriteRow([string]$line = '') {
-    $pad = [Math]::Max(0, (CW) - (StripAnsi $line).Length)
-    [Console]::Write($line + (' ' * $pad) + "`n")
-}
-
-function WriteSep([string]$ch = '-', [string]$col = $GRY) {
-    WriteRow "$col$($ch * (CW))$R"
-}
-
-function SyncScroll {
-    $vis = CVis
-    if ($script:sel -lt $script:scroll) {
-        $script:scroll = $script:sel
-    } elseif ($script:sel -ge ($script:scroll + $vis)) {
-        $script:scroll = $script:sel - $vis + 1
-    }
-    $script:scroll = [Math]::Max(0, $script:scroll)
-}
-
-function ClampSel {
-    $n = $script:items.Count
-    $script:sel = if ($n -eq 0) { 0 }
-                  else { [Math]::Max(0, [Math]::Min($script:sel, $n - 1)) }
-}
-
-# ── Draw UI ───────────────────────────────────────────────────────────────────────
-function DrawUI {
-    [Console]::SetCursorPosition(0, 0)
-
-    # Title bar
-    $uTab  = if ($script:scope -eq 'User')    { "${BBLU}${WHT}${BOLD} USER ${R}"   } else { "${GRY} USER ${R}"   }
-    $mTab  = if ($script:scope -eq 'Machine') { "${BBLU}${WHT}${BOLD} SYSTEM ${R}" } else { "${GRY} SYSTEM ${R}" }
-    $dFlag = if ($script:dirty) { "${YEL}${BOLD} [unsaved]${R}" } else { "${GRN} [saved]${R}" }
-    WriteRow "${CYN}${BOLD}  PATH MANAGER${R}   $uTab $mTab   $dFlag"
-    WriteSep '=' $BLU
-
-    # Column header
-    WriteRow "${GRY}${BOLD}   #   Path${R}"
-    WriteSep '-' $GRY
-
-    # Entry rows
-    $vis   = CVis
-    $count = $script:items.Count
-    $W     = CW
-
-    if ($count -eq 0) {
-        WriteRow "${DIM}   (no entries)  Press A to add one.${R}"
-        for ($i = 1; $i -lt $vis; $i++) { WriteRow }
-    } else {
-        for ($row = 0; $row -lt $vis; $row++) {
-            $idx = $row + $script:scroll
-            if ($idx -ge $count) { WriteRow; continue }
-
-            $path    = $script:items[$idx]
-            $num     = '{0,3}' -f ($idx + 1)
-            $isSel   = ($idx -eq $script:sel)
-            $exists  = [System.IO.Directory]::Exists($path) -or [System.IO.File]::Exists($path)
-            $maxLen  = $W - 9
-            $display = if ($path.Length -gt $maxLen) { $path.Substring(0, $maxLen - 3) + '...' } else { $path }
-
-            if ($isSel) {
-                $pCol = if ($exists) { $WHT } else { $RED }
-                WriteRow "${BBLU}${YEL}${BOLD} > ${R}${BBLU}${GRY}$num ${R}${BBLU}${pCol} $display ${R}"
-            } else {
-                $pCol = if ($exists) { $R } else { $RED }
-                WriteRow "   $num  ${pCol}$display${R}"
-            }
-        }
-    }
-
-    # Footer
-    WriteSep '-' $GRY
-
-    $total = if ($count -gt 0) { (($script:items.ToArray()) -join ';').Length } else { 0 }
-    $info  = if ($count -gt $vis) {
-        "${GRY}  $count entries, showing $($script:scroll+1)-$([Math]::Min($script:scroll+$vis,$count))   PATH length: $total chars${R}"
-    } else {
-        "${GRY}  $count entries   PATH length: $total chars${R}"
-    }
-    WriteRow $info
-
-    $mCol = if ($script:msgOk) { $GRN } else { $RED }
-    WriteRow $(if ($script:msg) { "${mCol}  $($script:msg)${R}" } else { '' })
-
-    WriteSep '=' $BLU
-    WriteRow "${GRY}  ${CYN}Up/Down${GRY} Navigate   ${CYN}A${GRY} Add   ${CYN}E${GRY} Edit   ${CYN}Del${GRY}/${CYN}X${GRY} Delete   ${CYN}[${GRY}/${CYN}]${GRY} Move Up/Down   ${CYN}Tab${GRY} Scope${R}"
-    WriteRow "${GRY}  ${CYN}Home/End${GRY} First/Last   ${CYN}PgUp/Dn${GRY} Page   ${CYN}S${GRY} Save   ${CYN}R${GRY} Reload   ${CYN}Q/Esc${GRY} Quit   ${DIM}Log: $($script:logFile)${R}"
-}
-
-# ── Input helpers ─────────────────────────────────────────────────────────────────
-function ReadLineInput([string]$prompt, [string]$default = '') {
-    SetCursor $true
-    $buf  = $default
-    $pos  = $buf.Length
-    $row  = [Console]::WindowHeight - 1
-    $done = $false
-
+# ── 6. UI Prompts ─────────────────────────────────────────────────────────────────
+function Read-Prompt([string]$prompt, [string]$default = '') {
+    Set-Cursor $true
+    $buf  = $default; $pos = $buf.Length; $row = [Console]::WindowHeight - 1; $done = $false
     while (-not $done) {
-        $W   = CW
-        $pre = "  $prompt  "
-        [Console]::SetCursorPosition(0, $row)
-        [Console]::Write(' ' * $W)
-        [Console]::SetCursorPosition(0, $row)
-        [Console]::Write("${CYN}${BOLD}$pre${R}${WHT}$buf${R}")
+        $W = Get-Width; $pre = "  $prompt  "
+        [Console]::SetCursorPosition(0, $row); [Console]::Write(' ' * $W)
+        [Console]::SetCursorPosition(0, $row); [Console]::Write("${CYN}${BOLD}$pre${R}${WHT}$buf${R}")
         [Console]::SetCursorPosition([Math]::Min($pre.Length + $pos, $W - 1), $row)
 
         $k = [Console]::ReadKey($true)
