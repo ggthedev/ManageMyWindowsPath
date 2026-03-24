@@ -418,6 +418,14 @@ function Invoke-Quit {
 }
 
 # ── 8. Render Engine ──────────────────────────────────────────────────────────────
+
+<#
+.SYNOPSIS
+    Paints the terminal user interface based on the current state model.
+.DESCRIPTION
+    Draws the header, lists visible PATH entries (highlighting missing directories in red), 
+    and displays the status footer and hotkey legend.
+#>
 function Draw-UI {
     [Console]::SetCursorPosition(0, 0)
 
@@ -506,6 +514,14 @@ $CharBindings = @{
 }
 
 # ── 10. Main Execution Loop ───────────────────────────────────────────────────────
+
+<#
+.SYNOPSIS
+    The core application loop.
+.DESCRIPTION
+    Initializes the terminal, handles render synchronization, blocks for user keyboard input,
+    and routes inputs via the Command Dictionaries to the relevant logic controllers.
+#>
 function Main {
     Init-Log
     Enable-VT
@@ -520,7 +536,7 @@ function Main {
         if ($State.Redraw) {
             Sync-Scroll
             Draw-UI
-            $State.Redraw = $false # Reset redraw flag after painting
+            $State.Redraw = $false
         }
 
         # Halt and wait for input
