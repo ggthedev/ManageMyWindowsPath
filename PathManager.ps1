@@ -200,7 +200,7 @@ function DrawUI {
 
     WriteSep '=' $BLU
     WriteRow "${GRY}  ${CYN}Up/Down${GRY} Navigate   ${CYN}A${GRY} Add   ${CYN}E${GRY} Edit   ${CYN}Del${GRY}/${CYN}X${GRY} Delete   ${CYN}[${GRY}/${CYN}]${GRY} Move Up/Down   ${CYN}Tab${GRY} Scope${R}"
-    WriteRow "${GRY}  ${CYN}Home/End${GRY} First/Last   ${CYN}PgUp/Dn${GRY} Page   ${CYN}S${GRY} Save   ${CYN}R${GRY} Reload   ${CYN}Q/Esc${GRY} Quit${R}"
+    WriteRow "${GRY}  ${CYN}Home/End${GRY} First/Last   ${CYN}PgUp/Dn${GRY} Page   ${CYN}S${GRY} Save   ${CYN}R${GRY} Reload   ${CYN}Q/Esc${GRY} Quit   ${DIM}Log: $($script:logFile)${R}"
 }
 
 # ── Input helpers ─────────────────────────────────────────────────────────────────
