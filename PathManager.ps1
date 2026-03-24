@@ -392,7 +392,9 @@ function Main {
 
     Clear-Host
     SetCursor $true
+    WriteLog 'INFO' '── SESSION END ──'
     Write-Host 'PATH Manager closed.'
+    Write-Host "Log: $($script:logFile)"
 }
 
 try   { Main }
