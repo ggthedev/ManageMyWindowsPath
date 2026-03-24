@@ -245,6 +245,20 @@ function Save-Data {
 }
 
 # ── 6. UI Prompts ─────────────────────────────────────────────────────────────────
+
+<#
+.SYNOPSIS
+    Provides an interactive, inline text input prompt.
+.DESCRIPTION
+    Handles individual keystrokes (arrows, backspace, delete) to allow for inline
+    editing of strings without relying on Read-Host, maintaining the TUI layout.
+.PARAMETER prompt
+    The text to display before the input field.
+.PARAMETER default
+    The initial string value to populate the input field with.
+.OUTPUTS
+    [string] The user's inputted string, or $null if the user aborted (Escape).
+#>
 function Read-Prompt([string]$prompt, [string]$default = '') {
     Set-Cursor $true
     $buf  = $default; $pos = $buf.Length; $row = [Console]::WindowHeight - 1; $done = $false
@@ -276,6 +290,14 @@ function Read-Prompt([string]$prompt, [string]$default = '') {
     return $buf
 }
 
+<#
+.SYNOPSIS
+    Displays a simple Yes/No confirmation prompt.
+.PARAMETER msg
+    The question to pose to the user.
+.OUTPUTS
+    [bool] $true if the user presses 'Y' or 'y', otherwise $false.
+#>
 function Confirm-Prompt([string]$msg) {
     Set-Cursor $true
     $row = [Console]::WindowHeight - 1
