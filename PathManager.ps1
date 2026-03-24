@@ -55,128 +55,66 @@ function Write-Log([string]$level, [string]$message) {
     try { $line | Out-File -FilePath $State.LogFile -Append -Encoding UTF8 } catch {}
 }
 
-# ── 3. ANSI & Terminal Control ────────────────────────────────────────────────────
+# ── 3. Native Win32 & Terminal Control ────────────────────────────────────────────
 $e    = [char]27
 $R    = "$e[0m";  $BOLD = "$e[1m";  $DIM  = "$e[2m"
 $CYN  = "$e[96m"; $YEL  = "$e[93m"; $GRN  = "$e[92m"
 $RED  = "$e[91m"; $BLU  = "$e[94m"; $GRY  = "$e[90m"; $WHT  = "$e[97m"
 $BBLU = "$e[44m"
 
-<#
-.SYNOPSIS
-    Enables Virtual Terminal (VT) processing for the current console.
-.DESCRIPTION
-    Uses P/Invoke to modify the console mode, allowing standard Windows consoles
-    (like ConHost) to correctly render ANSI color and escape sequences.
-#>
-function Enable-VT {
+function Init-Win32 {
     try {
         Add-Type -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
 [DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m);
 [DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);
-'@ -Namespace WinCon -Name K32 -ErrorAction Stop
-        $h = [WinCon.K32]::GetStdHandle(-11)
-        $m = 0u
-        [WinCon.K32]::GetConsoleMode($h, [ref]$m) | Out-Null
-        [WinCon.K32]::SetConsoleMode($h, $m -bor 4) | Out-Null
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@ -Namespace WinCon -Name Native -ErrorAction Stop
     } catch {}
 }
 
-<#
-.SYNOPSIS
-    Toggles the visibility of the console cursor.
-.PARAMETER visible
-    Boolean indicating whether the cursor should be shown ($true) or hidden ($false).
-#>
+function Enable-VT {
+    try {
+        $h = [WinCon.Native]::GetStdHandle(-11)
+        $m = 0u
+        [WinCon.Native]::GetConsoleMode($h, [ref]$m) | Out-Null
+        [WinCon.Native]::SetConsoleMode($h, $m -bor 4) | Out-Null
+    } catch {}
+}
+
 function Set-Cursor([bool]$visible) { try { [Console]::CursorVisible = $visible } catch {} }
 
 # ── 4. Layout & Render Helpers ────────────────────────────────────────────────────
-
-<#
-.SYNOPSIS
-    Calculates the functional width of the console window.
-.OUTPUTS
-    [int] The window width, clamped to a minimum of 60 columns.
-#>
 function Get-Width { return [Math]::Max(60, [Console]::WindowWidth) }
-
-<#
-.SYNOPSIS
-    Calculates the number of visible rows available for the list view.
-.OUTPUTS
-    [int] The visible row count, accounting for header and footer space.
-#>
 function Get-Vis   { return [Math]::Max(3,  [Console]::WindowHeight - 11) }
+function Strip-Ansi([string]$s) { return [System.Text.RegularExpressions.Regex]::Replace($s, '\x1b\[[0-9;]*m', '') }
 
-<#
-.SYNOPSIS
-    Removes ANSI escape sequences from a string.
-.DESCRIPTION
-    Used primarily to calculate the true printable length of a string for layout padding.
-.PARAMETER s
-    The string containing ANSI codes.
-.OUTPUTS
-    [string] The stripped, plain-text string.
-#>
-function Strip-Ansi([string]$s) {
-    return [System.Text.RegularExpressions.Regex]::Replace($s, '\x1b\[[0-9;]*m', '')
-}
-
-<#
-.SYNOPSIS
-    Writes a line to the console, padding it with spaces to clear the row.
-.PARAMETER line
-    The formatted string to write.
-#>
 function Write-Row([string]$line = '') {
     $pad = [Math]::Max(0, (Get-Width) - (Strip-Ansi $line).Length)
     [Console]::Write($line + (' ' * $pad) + "`n")
 }
+function Write-Sep([string]$ch = '-', [string]$col = $GRY) { Write-Row "$col$($ch * (Get-Width))$R" }
 
-<#
-.SYNOPSIS
-    Writes a horizontal separator line across the console width.
-#>
-function Write-Sep([string]$ch = '-', [string]$col = $GRY) {
-    Write-Row "$col$($ch * (Get-Width))$R"
-}
-
-<#
-.SYNOPSIS
-    Adjusts the scroll position to ensure the selected item remains visible.
-#>
 function Sync-Scroll {
     $vis = Get-Vis
-    if ($State.Sel -lt $State.Scroll) {
-        $State.Scroll = $State.Sel
-    } elseif ($State.Sel -ge ($State.Scroll + $vis)) {
-        $State.Scroll = $State.Sel - $vis + 1
-    }
+    if ($State.Sel -lt $State.Scroll) { $State.Scroll = $State.Sel } 
+    elseif ($State.Sel -ge ($State.Scroll + $vis)) { $State.Scroll = $State.Sel - $vis + 1 }
     $State.Scroll = [Math]::Max(0, $State.Scroll)
 }
 
-<#
-.SYNOPSIS
-    Ensures the selection index stays within the valid bounds of the items list.
-#>
 function Clamp-Sel {
     $n = $State.Items.Count
     $State.Sel = if ($n -eq 0) { 0 } else { [Math]::Max(0, [Math]::Min($State.Sel, $n - 1)) }
 }
 
-# ── 5. Data I/O (Robust Initialization) ───────────────────────────────────────────
-
-<#
-.SYNOPSIS
-    Loads the PATH environment variable into the application state.
-.DESCRIPTION
-    Reads the target scope ('User' or 'Machine') from the registry, parses the
-    semicolon-delimited list, and populates the $State.Items list. Handles errors gracefully.
-#>
+# ── 5. Data I/O (Direct Registry Method) ──────────────────────────────────────────
 function Load-Data {
     try {
-        $raw = [Environment]::GetEnvironmentVariable('PATH', $State.Scope)
+        $regPath = if ($State.Scope -eq 'User') { 'HKCU:\Environment' } else { 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' }
+        
+        # Reads directly from registry to bypass .NET expansion bugs
+        $raw = Get-ItemPropertyValue -Path $regPath -Name 'Path' -ErrorAction SilentlyContinue
+        
         $State.Items.Clear()
         if (-not [string]::IsNullOrWhiteSpace($raw)) {
             $raw -split ';' | Where-Object { $_ -ne '' } | ForEach-Object { $State.Items.Add($_) }
@@ -485,7 +423,6 @@ function Main {
 
         if ($ctrl -and $k.Key -eq [ConsoleKey]::C) { $State.Run = $false; continue }
 
-        # Route input via Command Dictionaries
         if ($KeyBindings.ContainsKey($k.Key)) {
             & $KeyBindings[$k.Key]
         } else {
