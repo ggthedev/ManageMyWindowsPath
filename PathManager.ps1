@@ -9,6 +9,38 @@
 
 Set-StrictMode -Off
 
+# ── Logging ───────────────────────────────────────────────────────────────────────
+$script:logFile = $null
+
+function InitLog {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $logDir  = if ($isAdmin) { Join-Path $env:ProgramData 'PathManager\logs' }
+               else          { Join-Path $env:LOCALAPPDATA 'PathManager\logs' }
+    if (-not (Test-Path $logDir)) { New-Item -Path $logDir -ItemType Directory -Force | Out-Null }
+
+    $script:logFile = Join-Path $logDir "PathManager_$(Get-Date -Format 'yyyyMMdd').log"
+
+    $maxSize = 5MB
+    $keep    = 5
+    if ((Test-Path $script:logFile) -and (Get-Item $script:logFile).Length -ge $maxSize) {
+        for ($i = $keep; $i -ge 1; $i--) {
+            $old = "$($script:logFile).$i"
+            $new = "$($script:logFile).$($i + 1)"
+            if ($i -eq $keep -and (Test-Path $old)) { Remove-Item $old -Force }
+            if (Test-Path $old) { Rename-Item $old $new }
+        }
+        Rename-Item $script:logFile "$($script:logFile).1"
+    }
+}
+
+function WriteLog([string]$level, [string]$message) {
+    if (-not $script:logFile) { return }
+    $ts   = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $user = "$env:USERDOMAIN\$env:USERNAME"
+    $line = "$ts  [$level]  $user  $message"
+    try { $line | Out-File -FilePath $script:logFile -Append -Encoding UTF8 } catch {}
+}
+
 # ── ANSI colors ───────────────────────────────────────────────────────────────────
 $e    = [char]27
 $R    = "$e[0m";  $BOLD = "$e[1m";  $DIM  = "$e[2m"
